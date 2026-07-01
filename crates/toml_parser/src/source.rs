@@ -95,7 +95,7 @@ impl<'i> Raw<'i> {
 
     pub fn decode_key(&self, output: &mut dyn StringBuilder<'i>, error: &mut dyn ErrorSink) {
         let mut error = |err: crate::ParseError| {
-            error.report_error(err.rebase_spans(self.span.start));
+            error.report_error(err.rebase_spans(self.span.start()));
         };
         match self.encoding {
             Some(Encoding::LiteralString) => {
@@ -137,7 +137,7 @@ impl<'i> Raw<'i> {
         error: &mut dyn ErrorSink,
     ) -> crate::decoder::scalar::ScalarKind {
         let mut error = |err: crate::ParseError| {
-            error.report_error(err.rebase_spans(self.span.start));
+            error.report_error(err.rebase_spans(self.span.start()));
         };
         match self.encoding {
             Some(Encoding::LiteralString) => {
@@ -166,14 +166,14 @@ impl<'i> Raw<'i> {
 
     pub fn decode_comment(&self, error: &mut dyn ErrorSink) {
         let mut error = |err: crate::ParseError| {
-            error.report_error(err.rebase_spans(self.span.start));
+            error.report_error(err.rebase_spans(self.span.start()));
         };
         crate::decoder::ws::decode_comment(*self, &mut error);
     }
 
     pub fn decode_newline(&self, error: &mut dyn ErrorSink) {
         let mut error = |err: crate::ParseError| {
-            error.report_error(err.rebase_spans(self.span.start));
+            error.report_error(err.rebase_spans(self.span.start()));
         };
         crate::decoder::ws::decode_newline(*self, &mut error);
     }
@@ -196,15 +196,24 @@ impl<'i> Raw<'i> {
 }
 
 /// Location within the [`Source`]
+///
+/// Offsets are stored as `u32` to keep [`Span`] (and the [`Token`][crate::lexer::Token] /
+/// [`Event`][crate::parser::Event] that embed it) small, halving the memory traffic of the token
+/// stream. As a result, inputs are limited to `u32::MAX` (4 GiB) bytes.
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
 }
 
 impl Span {
     pub fn new_unchecked(start: usize, end: usize) -> Self {
-        Self { start, end }
+        // Offsets are stored as `u32` (see the type-level docs); inputs larger than `u32::MAX`
+        // bytes would be truncated here.
+        Self {
+            start: start as u32,
+            end: end as u32,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -212,35 +221,44 @@ impl Span {
     }
 
     pub fn len(&self) -> usize {
-        self.end - self.start
+        (self.end - self.start) as usize
     }
 
     pub fn start(&self) -> usize {
-        self.start
+        self.start as usize
     }
 
     pub fn end(&self) -> usize {
-        self.end
+        self.end as usize
     }
 
     pub fn before(&self) -> Self {
-        Self::new_unchecked(self.start, self.start)
+        Self {
+            start: self.start,
+            end: self.start,
+        }
     }
 
     pub fn after(&self) -> Self {
-        Self::new_unchecked(self.end, self.end)
+        Self {
+            start: self.end,
+            end: self.end,
+        }
     }
 
     /// Extend this `Raw` to the end of `after`
     #[must_use]
     pub fn append(&self, after: Self) -> Self {
-        Self::new_unchecked(self.start, after.end)
+        Self {
+            start: self.start,
+            end: after.end,
+        }
     }
 }
 
 impl core::fmt::Debug for Span {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        (self.start..self.end).fmt(f)
+        (self.start()..self.end()).fmt(f)
     }
 }
 
@@ -248,6 +266,7 @@ impl core::ops::Add<usize> for Span {
     type Output = Self;
 
     fn add(self, offset: usize) -> Self::Output {
+        let offset = offset as u32;
         Self::Output {
             start: self.start + offset,
             end: self.end + offset,
@@ -259,15 +278,17 @@ impl core::ops::Add<Span> for usize {
     type Output = Span;
 
     fn add(self, span: Span) -> Self::Output {
+        let offset = self as u32;
         Self::Output {
-            start: span.start + self,
-            end: span.end + self,
+            start: span.start + offset,
+            end: span.end + offset,
         }
     }
 }
 
 impl core::ops::AddAssign<usize> for Span {
     fn add_assign(&mut self, rhs: usize) {
+        let rhs = rhs as u32;
         self.start += rhs;
         self.end += rhs;
     }
